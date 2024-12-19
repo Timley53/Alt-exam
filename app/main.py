@@ -2,46 +2,18 @@ from typing import Annotated, Optional
 from fastapi import FastAPI, Body, HTTPException
 from pydantic import BaseModel, EmailStr
 from uuid import UUID, uuid4
-from app.db import usersDb , booksDb
+from datetime import date,datetime
+from uuid import uuid4
+from db import usersDb , booksDb , borrow_record
+from models import CreateUser, CreateBook, UpdateUser, BookUpdate, BookAvailable,Book,BorrowBook,BorrowRecord,ReturnBookData,User
+
 
 app = FastAPI()
 
 
 
-class CreateUser(BaseModel):
-    username: str
-    full_name: str
-    email: EmailStr
-
-class User(CreateUser):
-    id: UUID
-    is_active: bool = True
-
-class UpdateUser(BaseModel):
-    username: str | None = None
-    full_name: str | None = None
-    email: EmailStr | None = None
 
 
-# ===========Books Model============= 
-
-class CreateBook(BaseModel):
-    title: str
-    author: str
-
-
-class Book(CreateBook):
-    id:UUID
-    is_available: bool = True
-    
-
-class BookUpdate(BaseModel):
-     title: str | None = None
-     author: str | None = None
-
-class BookAvailable(BaseModel):
-    id: UUID 
-    is_available: bool = True
 
 
 
@@ -78,7 +50,6 @@ def get_all_users():
     return all_Users
 
 # read a single user
-
 @app.get('/users/{user_id}', status_code=200)
 def get_a_user(userId: UUID):
     userId= str(userId)
@@ -120,9 +91,9 @@ def delete_user(userId: UUID ):
      'message': 'User deleted successfully'
  }
 
-
+# deactivate user
 @app.put('/users/{user_id}', status_code=200)
-def is_active(userId: UUID):
+def deactiveate_user(userId: UUID):
     userId = str(userId)
     for key, value in usersDb.items():
         if key == userId:
@@ -188,6 +159,8 @@ def update_book(book_id: UUID, update_data: Annotated[BookUpdate, Body(...)]):
         'book': booksDb[book_id]
     }
 
+
+# delete books
 @app.delete('/books/{book_id}')
 def delete_book(book_id:UUID):
     book_id = str(book_id)
@@ -202,7 +175,7 @@ def delete_book(book_id:UUID):
     }
 
 
-
+# make book available
 @app.put('/books/{book_id}')
 def is_available(book_id: UUID):
     book_id = str(book_id)
@@ -216,5 +189,168 @@ def is_available(book_id: UUID):
         'id': book_id,
         'book': booksDb[book_id]
     }
+
+
+# ===========get borrow records=======
+@app.get('/books/borrow_record')
+def get_borrow_record():
+    all_borrow_record = []
+
+    for key, value in borrow_record.items():
+        all_borrow_record.append(value)
+
+    return all_borrow_record
+
+
+
+# ===========borrow book=======
+@app.put('/books/borrow_book/{user_id}', status_code=201)
+def borrow_book(book_id: UUID, user_id: UUID):
+    book_id = str(book_id)
+    user_id = str(user_id)
+
+# if book or user does not exist
+    if book_id not in booksDb or user_id not in usersDb:
+        raise HTTPException(
+            status_code= 404,
+            detail='Not found: User or Book not found'
+        )
+    # if user is not active
+    if usersDb[user_id]['is_active'] == False:
+         raise HTTPException(
+            status_code= 401,
+            detail='Unavailable: user not authorized for operation'
+        )
+    # if book is not available
+    if booksDb[book_id]['is_available'] == False:
+         raise HTTPException(
+            status_code= 401,
+            detail='Unavailable: book already borrowed'
+        )
+    
+
+    new_record_id = uuid4()
+
+    new_record = BorrowRecord(
+        id=new_record_id,
+        book_id=book_id,
+        user_id=user_id,
+        borrow_date=date.today(),
+        return_date= None
+    )
+
+    borrow_record.update({str(new_record_id) : new_record.model_dump()})
+    print(borrow_record)
+
+    booksDb[book_id]['is_available'] = False
+    return {
+       'message': 'Book book borrowed successfully'
+    }
+
+
+# @app.put("/books/borrow_book/{user_id}", status_code=201)
+# def borrow_book(book_id: UUID, user_id: UUID):
+#     book_id = str(book_id)
+#     user_id = str(user_id)
+
+#     if book_id not in booksDb:
+#         raise HTTPException(status_code=404, detail="Not found: Book not found")
+#     if user_id not in usersDb:
+#         raise HTTPException(status_code=404, detail="Not found: User not found")
+#     if usersDb[user_id]["is_active"] == False:
+#         raise HTTPException(
+#             status_code=401, detail="Unavailable: user not authorized for operation"
+#         )
+#     record_id = str(uuid4())
+#     borrow_record[record_id] = {
+#         "id": record_id,
+#         "book_id": book_id,
+#         "user_id": user_id,
+#         "borrow_date": date.today(),
+#         "return_date": None,
+#     }
+
+#     booksDb[book_id]["is_available"] = False
+#     return {"message": "Book borrowed successfully"}
+#     # borrow_record.update({str(new_record_id) : new_record}) 
+
+# ==============return book==============
+@app.put('/books/return_book/{borrow_record_id}')
+def return_book(borrow_record_id:UUID, book_id: UUID, user_id:UUID, ReturnData: Annotated[ReturnBookData, Body(...)]):
+    borrow_record_id = str(borrow_record_id)
+    book_id = str(book_id)
+    user_id = str(user_id)
+    
+
+# if borrow_record for book does not exist
+    if borrow_record_id not in borrow_record:
+            raise HTTPException(
+                status_code= 404,
+                detail='Not found: Book not in borrow record'
+            )   
+    
+    if book_id not in booksDb:
+        raise HTTPException(
+            status_code= 404,
+            detail='Not found: Book does not exist'
+        ) 
+    if user_id not in usersDb:
+        raise HTTPException(
+            status_code= 404,
+            detail='Not found: User does not exist'
+        ) 
+    # ===
+
+    # if user is not active
+    if usersDb[user_id]['is_active'] == False:
+         raise HTTPException(
+            status_code= 401,
+            detail='Unavailable: user not authorized for operation'
+        )
+    
+
+    if ReturnData.return_date is not None:
+        borrow_record[str(borrow_record_id)]["return_date"] =  ReturnData.return_date
+    else:
+         borrow_record[str(borrow_record_id)]["return_date"] = date.today()
+
+
+        # example
+
+    booksDb[book_id]['is_available'] = True
+
+    return {
+        'message': 'Book returned succesfully'
+    }
+
+# test the return books 
+
+
+
+
+@app.get('/books/borrow_records/{user_id}')
+def get_user_borrow_records(user_id: UUID):
+    user_id = str(user_id)
+    user_borrow_record: list[BorrowRecord] = []
+
+
+
+    if user_id not in usersDb:
+          raise HTTPException(
+            status_code= 404,
+            detail='Not found: User does not exist'
+        ) 
+
+    for key, record in borrow_record.items():
+            if record['user_id'] == user_id:
+             user_borrow_record.append(record)
+
+    return user_borrow_record
+
+
+
+         
+
+        
 
 
